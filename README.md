@@ -70,15 +70,28 @@ cd ai-finance-tracker
 npm run install:all
 ```
 
-3. Set up environment variables:
+3. Set up Supabase database:
+   - Follow the detailed guide in `backend/supabase/SETUP.md`
+   - Create a new Supabase project at https://supabase.com
+   - Run the database schema from `backend/supabase/schema.sql`
+   - Obtain your Supabase credentials (URL, anon key, service key)
+
+4. Set up environment variables:
 
 **Backend** (`backend/.env`):
 ```
 PORT=5000
+NODE_ENV=development
+
+# Supabase Configuration
 SUPABASE_URL=your_supabase_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_KEY=your_supabase_service_key
+
+# JWT Configuration
 JWT_SECRET=your_jwt_secret
+
+# AI Agent Configuration
 AI_AGENT_API_KEY=your_ai_agent_api_key
 ```
 
@@ -89,10 +102,12 @@ VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
-4. Set up Supabase database:
-   - Create a new Supabase project
-   - Run the database migrations (see `backend/migrations/`)
-   - Configure Row Level Security policies
+5. Verify database connection:
+```bash
+cd backend
+npm run dev
+# Check http://localhost:5000/health for database status
+```
 
 ### Development
 
