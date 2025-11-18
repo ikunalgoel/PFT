@@ -65,6 +65,15 @@ CREATE TABLE IF NOT EXISTS ai_insights (
   CONSTRAINT valid_period CHECK (period_end >= period_start)
 );
 
+-- User settings table
+CREATE TABLE IF NOT EXISTS user_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  currency VARCHAR(3) NOT NULL DEFAULT 'GBP' CHECK (currency IN ('GBP', 'INR')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- ============================================================================
 -- INDEXES
 -- ============================================================================
@@ -101,6 +110,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_insights_user_date
 CREATE INDEX IF NOT EXISTS idx_ai_insights_period 
   ON ai_insights(user_id, period_start, period_end);
 
+-- User settings indexes
+CREATE INDEX IF NOT EXISTS idx_user_settings_user 
+  ON user_settings(user_id);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ============================================================================
@@ -110,6 +123,7 @@ ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE budget_alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
 -- Transactions RLS Policies
 CREATE POLICY "Users can view their own transactions"
@@ -206,6 +220,24 @@ CREATE POLICY "Users can delete their own insights"
   ON ai_insights FOR DELETE
   USING (auth.uid() = user_id);
 
+-- User Settings RLS Policies
+CREATE POLICY "Users can view their own settings"
+  ON user_settings FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own settings"
+  ON user_settings FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own settings"
+  ON user_settings FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own settings"
+  ON user_settings FOR DELETE
+  USING (auth.uid() = user_id);
+
 -- ============================================================================
 -- FUNCTIONS AND TRIGGERS
 -- ============================================================================
@@ -227,5 +259,10 @@ CREATE TRIGGER update_transactions_updated_at
 
 CREATE TRIGGER update_budgets_updated_at
   BEFORE UPDATE ON budgets
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_user_settings_updated_at
+  BEFORE UPDATE ON user_settings
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();

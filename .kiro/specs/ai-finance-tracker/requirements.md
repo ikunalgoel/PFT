@@ -15,6 +15,9 @@ The AI-Powered Personal Finance Tracker is a web application that enables users 
 - **Threshold**: A predefined spending limit that triggers alerts when exceeded
 - **Spending Pattern**: Recurring financial behaviors identified through transaction analysis
 - **Data Store**: The persistent storage system (SQLite or Supabase) for transaction and budget data
+- **Currency**: The monetary unit used for displaying and storing financial amounts
+- **User Settings**: Configurable preferences stored per user including currency selection
+- **LLM**: Large Language Model used for generating AI insights and recommendations
 
 ## Requirements
 
@@ -173,3 +176,51 @@ The AI-Powered Personal Finance Tracker is a web application that enables users 
 3. IF a database operation fails, THEN THE Finance Tracker SHALL retry the operation up to 3 times
 4. THE Finance Tracker SHALL implement database schema with appropriate indexes for query performance
 5. THE Finance Tracker SHALL maintain data integrity through proper transaction handling and constraints
+
+### Requirement 14
+
+**User Story:** As a user, I want to select my preferred currency, so that all financial amounts are displayed in my local currency
+
+#### Acceptance Criteria
+
+1. THE Finance Tracker SHALL support GBP (British Pound) and INR (Indian Rupee) as Currency options
+2. WHEN a user creates an account, THE Finance Tracker SHALL prompt the user to select their preferred Currency
+3. THE Finance Tracker SHALL store the user's Currency preference in User Settings
+4. WHEN displaying any monetary amount, THE Finance Tracker SHALL format the amount with the appropriate Currency symbol (£ for GBP, ₹ for INR)
+5. WHEN a user changes their Currency preference, THE Finance Tracker SHALL update all displayed amounts immediately without converting existing transaction values
+
+### Requirement 15
+
+**User Story:** As a user, I want to manage my account settings, so that I can customize my experience and update my preferences
+
+#### Acceptance Criteria
+
+1. THE Finance Tracker SHALL provide a Settings page accessible from the user navigation menu
+2. WHEN a user accesses Settings, THE Finance Tracker SHALL display current User Settings including Currency preference
+3. WHEN a user modifies a setting, THE Finance Tracker SHALL validate the change before saving
+4. WHEN a user saves updated settings, THE Finance Tracker SHALL persist the changes to the Data Store
+5. THE Finance Tracker SHALL display a confirmation message when settings are successfully updated
+
+### Requirement 16
+
+**User Story:** As a user, I want AI insights generated using a real language model, so that I receive accurate and contextual financial advice
+
+#### Acceptance Criteria
+
+1. THE AI Agent SHALL integrate with an LLM API (OpenAI, Anthropic, or similar) for generating insights
+2. WHEN generating insights, THE AI Agent SHALL send transaction data and context to the LLM
+3. THE AI Agent SHALL include the user's Currency preference in the prompt context sent to the LLM
+4. WHEN the LLM returns insights, THE AI Agent SHALL parse and validate the response structure
+5. IF the LLM API call fails, THEN THE AI Agent SHALL retry up to 2 times before returning a fallback message
+
+### Requirement 17
+
+**User Story:** As a user, I want AI insights to respect my currency preference, so that recommendations are relevant to my financial context
+
+#### Acceptance Criteria
+
+1. WHEN generating insights, THE AI Agent SHALL include the user's selected Currency in the analysis prompt
+2. THE AI Agent SHALL format all monetary amounts in AI-generated text using the user's Currency symbol
+3. WHEN providing savings recommendations, THE AI Agent SHALL use currency-appropriate amounts and context
+4. THE AI Agent SHALL consider currency-specific spending patterns when generating projections
+5. THE Finance Tracker SHALL display all AI-generated monetary values with the correct Currency formatting

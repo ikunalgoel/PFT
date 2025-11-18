@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TransactionService } from './transaction.service.js';
 import { TransactionRepository } from '../repositories/transaction.repository.js';
-import { Transaction, TransactionInput, ErrorCode } from '../types/database.js';
+import { Transaction, TransactionInput } from '../types/database.js';
 
 // Mock repository
 const mockRepository = {

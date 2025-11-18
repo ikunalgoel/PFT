@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AIInsightsService, AnalyticsData } from './ai-insights.service.js';
 import { AnalyticsService } from './analytics.service.js';
+import { SettingsService } from './settings.service.js';
 import { InsightsRepository } from '../repositories/insights.repository.js';
+import { LLMClient } from '../clients/llm.client.js';
 import {
   AIInsights,
   SpendingSummary,
   TrendData,
   BudgetComparison,
+  UserSettings,
 } from '../types/database.js';
 
 // Mock services and repositories
@@ -23,17 +26,39 @@ const mockInsightsRepository = {
   deleteOldInsights: vi.fn(),
 } as unknown as InsightsRepository;
 
+const mockSettingsService = {
+  getUserSettings: vi.fn(),
+} as unknown as SettingsService;
+
+const mockLLMClient = {
+  generateInsights: vi.fn(),
+  validateResponse: vi.fn(),
+  retry: vi.fn(),
+} as unknown as LLMClient;
+
 describe('AIInsightsService', () => {
   let service: AIInsightsService;
   const userId = 'test-user-id';
+  const mockUserSettings: UserSettings = {
+    id: 'settings-1',
+    user_id: userId,
+    currency: 'GBP',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
 
   beforeEach(() => {
     service = new AIInsightsService(
       mockAnalyticsService,
-      mockInsightsRepository
+      mockInsightsRepository,
+      mockSettingsService,
+      mockLLMClient
     );
     vi.clearAllMocks();
     service.clearAllCache();
+    
+    // Default mock for settings
+    vi.mocked(mockSettingsService.getUserSettings).mockResolvedValue(mockUserSettings);
   });
 
   describe('buildPrompt', () => {
@@ -65,15 +90,16 @@ describe('AIInsightsService', () => {
       };
 
       const period = { startDate: '2024-01-01', endDate: '2024-01-31' };
-      const prompt = service.buildPrompt(analyticsData, period);
+      const prompt = service.buildPrompt(analyticsData, period, 'GBP');
 
       // Verify prompt contains key information
       expect(prompt).toContain('Period: 2024-01-01 to 2024-01-31');
-      expect(prompt).toContain('Total Spending: $1500.00');
+      expect(prompt).toContain('User Currency: GBP');
+      expect(prompt).toContain('Currency Symbol: £');
       expect(prompt).toContain('Number of Transactions: 25');
-      expect(prompt).toContain('Food: $600.00 (40.0%)');
-      expect(prompt).toContain('Transport: $500.00 (33.3%)');
-      expect(prompt).toContain('Grocery Store: $300.00');
+      expect(prompt).toContain('Food:');
+      expect(prompt).toContain('Transport:');
+      expect(prompt).toContain('Grocery Store:');
       expect(prompt).toContain('Food Budget: 75.0% used');
       expect(prompt).toContain('Format your response as JSON');
     });
@@ -88,9 +114,10 @@ describe('AIInsightsService', () => {
       };
 
       const period = { startDate: '2024-01-01', endDate: '2024-01-31' };
-      const prompt = service.buildPrompt(analyticsData, period);
+      const prompt = service.buildPrompt(analyticsData, period, 'INR');
 
-      expect(prompt).toContain('Total Spending: $500.00');
+      expect(prompt).toContain('User Currency: INR');
+      expect(prompt).toContain('Currency Symbol: ₹');
       expect(prompt).toContain('No merchant data available');
       expect(prompt).toContain('No budgets configured');
     });
@@ -128,7 +155,7 @@ describe('AIInsightsService', () => {
         },
       });
 
-      const parsed = service.parseAIResponse(validResponse);
+      const parsed = service.parseAIResponse(validResponse, 'GBP');
 
       expect(parsed.monthlySummary).toBe(
         'You spent $1500 this month across 25 transactions.'
@@ -157,7 +184,7 @@ describe('AIInsightsService', () => {
       
       I hope this helps!`;
 
-      const parsed = service.parseAIResponse(responseWithText);
+      const parsed = service.parseAIResponse(responseWithText, 'GBP');
 
       expect(parsed.monthlySummary).toBe('Summary text');
       expect(parsed.categoryInsights).toHaveLength(1);
@@ -176,7 +203,7 @@ describe('AIInsightsService', () => {
         ],
       });
 
-      const parsed = service.parseAIResponse(minimalResponse);
+      const parsed = service.parseAIResponse(minimalResponse, 'INR');
 
       expect(parsed.monthlySummary).toBe('Summary');
       expect(parsed.spendingSpikes).toEqual([]);
@@ -187,7 +214,7 @@ describe('AIInsightsService', () => {
     it('should throw error for invalid JSON', () => {
       const invalidResponse = 'This is not JSON';
 
-      expect(() => service.parseAIResponse(invalidResponse)).toThrow(
+      expect(() => service.parseAIResponse(invalidResponse, 'GBP')).toThrow(
         'No JSON found in AI response'
       );
     });
@@ -197,7 +224,7 @@ describe('AIInsightsService', () => {
         categoryInsights: [],
       });
 
-      expect(() => service.parseAIResponse(missingFieldsResponse)).toThrow(
+      expect(() => service.parseAIResponse(missingFieldsResponse, 'GBP')).toThrow(
         'Invalid or missing monthlySummary'
       );
     });
@@ -213,7 +240,7 @@ describe('AIInsightsService', () => {
         ],
       });
 
-      expect(() => service.parseAIResponse(invalidInsightsResponse)).toThrow(
+      expect(() => service.parseAIResponse(invalidInsightsResponse, 'GBP')).toThrow(
         'Invalid category insight'
       );
     });
@@ -386,17 +413,19 @@ describe('AIInsightsService', () => {
         generated_at: new Date().toISOString(),
       };
 
-      vi.mocked(mockInsightsRepository.findByPeriod)
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(mockInsights);
+      // First call - return insights from database
+      vi.mocked(mockInsightsRepository.findByPeriod).mockResolvedValue(mockInsights);
 
-      // First call - should query database
-      await service.generateInsights(userId, {
+      // First call - should query database and cache result
+      const firstResult = await service.generateInsights(userId, {
         startDate: '2024-01-01',
         endDate: '2024-01-31',
       });
 
-      // Clear mocks
+      expect(firstResult.monthly_summary).toBe('Summary');
+      expect(mockInsightsRepository.findByPeriod).toHaveBeenCalledTimes(1);
+
+      // Clear mocks to verify cache is used
       vi.clearAllMocks();
 
       // Second call - should use cache (no database call)

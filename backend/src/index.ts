@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { testDatabaseConnection, supabaseConfig } from './config/supabase.js';
 import { checkDatabaseHealth } from './utils/database.js';
@@ -8,15 +9,48 @@ import transactionRoutes from './routes/transaction.routes.js';
 import budgetRoutes from './routes/budget.routes.js';
 import analyticsRoutes from './routes/analytics.routes.js';
 import insightsRoutes from './routes/insights.routes.js';
+import settingsRoutes from './routes/settings.routes.js';
+import {
+  errorHandler,
+  notFoundHandler,
+  apiLimiter,
+  transformResponse,
+} from './middleware/index.js';
+import {
+  performanceMonitor,
+  getPerformanceStats,
+} from './middleware/performance.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Security middleware
+app.use(helmet());
+
+// CORS configuration
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || '*',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' })); // Increased limit for CSV uploads
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Performance monitoring middleware
+app.use(performanceMonitor);
+
+// Rate limiting for all API routes
+app.use('/api', apiLimiter);
+
+// Transform responses to camelCase for all API routes
+app.use('/api', transformResponse);
 
 // Health check endpoint with database status
 app.get('/health', async (_req, res) => {
@@ -37,6 +71,15 @@ app.get('/health', async (_req, res) => {
   });
 });
 
+// Performance metrics endpoint
+app.get('/metrics', (_req, res) => {
+  const stats = getPerformanceStats();
+  res.json({
+    timestamp: new Date().toISOString(),
+    performance: stats,
+  });
+});
+
 // API routes
 app.get('/api', (_req, res) => {
   res.json({ message: 'AI Finance Tracker API' });
@@ -53,6 +96,15 @@ app.use('/api/analytics', analyticsRoutes);
 
 // AI Insights routes
 app.use('/api/insights', insightsRoutes);
+
+// Settings routes
+app.use('/api/settings', settingsRoutes);
+
+// 404 handler for undefined routes
+app.use(notFoundHandler);
+
+// Global error handling middleware (must be last)
+app.use(errorHandler);
 
 // Start server with database connection test
 const startServer = async () => {

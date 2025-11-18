@@ -1,0 +1,170 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Backend Tests and Build
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./backend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run linter
+        run: npm run lint
+      
+      - name: Run tests
+        run: npm run test
+        env:
+          NODE_ENV: test
+      
+      - name: Build TypeScript
+        run: npm run build
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-build
+          path: backend/dist
+          retention-days: 7
+
+  # Frontend Tests and Build
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    
+    defaults:
+      run:
+        working-directory: ./frontend
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run linter
+        run: npm run lint
+      
+      - name: Build application
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'http://localhost:5000' }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key' }}
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist
+          retention-days: 7
+
+  # Deploy Backend to Render (only on main branch)
+  deploy-backend:
+    name: Deploy Backend
+    needs: [backend-test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Trigger Render deployment
+        run: |
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
+            curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+            echo "✅ Render deployment triggered"
+          else
+            echo "⚠️ RENDER_DEPLOY_HOOK_URL not set, skipping deployment"
+          fi
+      
+      - name: Wait for deployment
+        run: sleep 30
+      
+      - name: Health check
+        run: |
+          if [ -n "${{ secrets.BACKEND_URL }}" ]; then
+            for i in {1..10}; do
+              if curl -f "${{ secrets.BACKEND_URL }}/health"; then
+                echo "✅ Backend health check passed"
+                exit 0
+              fi
+              echo "⏳ Waiting for backend... (attempt $i/10)"
+              sleep 10
+            done
+            echo "❌ Backend health check failed"
+            exit 1
+          else
+            echo "⚠️ BACKEND_URL not set, skipping health check"
+          fi
+
+  # Deploy Frontend to Netlify (automatic via Netlify GitHub integration)
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: [frontend-test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Trigger Netlify deployment
+        run: |
+          if [ -n "${{ secrets.NETLIFY_DEPLOY_HOOK_URL }}" ]; then
+            curl -X POST "${{ secrets.NETLIFY_DEPLOY_HOOK_URL }}"
+            echo "✅ Netlify deployment triggered"
+          else
+            echo "⚠️ NETLIFY_DEPLOY_HOOK_URL not set"
+            echo "ℹ️ Netlify will auto-deploy via GitHub integration"
+          fi
+
+  # Notify on deployment completion
+  notify:
+    name: Deployment Notification
+    needs: [deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Send notification
+        run: |
+          if [ "${{ needs.deploy-backend.result }}" == "success" ] && [ "${{ needs.deploy-frontend.result }}" == "success" ]; then
+            echo "✅ Deployment successful!"
+            echo "Backend: ${{ secrets.BACKEND_URL }}"
+            echo "Frontend: ${{ secrets.FRONTEND_URL }}"
+          else
+            echo "❌ Deployment failed or skipped"
+            echo "Backend status: ${{ needs.deploy-backend.result }}"
+            echo "Frontend status: ${{ needs.deploy-frontend.result }}"
+          fi

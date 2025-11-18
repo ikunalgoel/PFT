@@ -1,0 +1,41 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-dependencies:
+    name: Check for Dependency Updates
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Check backend dependencies
+        run: |
+          cd backend
+          echo "## Backend Dependencies" >> $GITHUB_STEP_SUMMARY
+          npm outdated || true
+      
+      - name: Check frontend dependencies
+        run: |
+          cd frontend
+          echo "## Frontend Dependencies" >> $GITHUB_STEP_SUMMARY
+          npm outdated || true
+      
+      - name: Security audit
+        run: |
+          echo "## Security Audit" >> $GITHUB_STEP_SUMMARY
+          cd backend
+          npm audit || true
+          cd ../frontend
+          npm audit || true

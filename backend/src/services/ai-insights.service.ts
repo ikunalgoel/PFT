@@ -1,5 +1,6 @@
 import { AnalyticsService } from './analytics.service.js';
 import { InsightsRepository } from '../repositories/insights.repository.js';
+import { SettingsService } from './settings.service.js';
 import {
   AIInsights,
   AIInsightsInput,
@@ -7,7 +8,10 @@ import {
   SpendingSpike,
   Projection,
   ErrorCode,
+  Currency,
 } from '../types/database.js';
+import { LLMClient, LLMError } from '../clients/llm.client.js';
+import { CurrencyFormatter } from '../utils/currency.js';
 
 /**
  * Date range interface for insights generation
@@ -66,7 +70,7 @@ interface CacheEntry {
 
 /**
  * AI Insights Service
- * Handles AI-powered financial insights generation
+ * Handles AI-powered financial insights generation using real LLM
  */
 export class AIInsightsService {
   private cache: Map<string, CacheEntry>;
@@ -74,7 +78,9 @@ export class AIInsightsService {
 
   constructor(
     private analyticsService: AnalyticsService,
-    private insightsRepository: InsightsRepository
+    private insightsRepository: InsightsRepository,
+    private settingsService: SettingsService,
+    private llmClient: LLMClient
   ) {
     this.cache = new Map();
   }
@@ -104,17 +110,24 @@ export class AIInsightsService {
         return existing;
       }
 
+      // Get user settings for currency
+      const settings = await this.settingsService.getUserSettings(userId);
+      const currency = settings.currency;
+
       // Gather analytics data
       const analyticsData = await this.gatherAnalyticsData(userId, period);
 
-      // Build prompt for AI
-      const prompt = this.buildPrompt(analyticsData, period);
+      // Build prompt for AI with currency context
+      const prompt = this.buildPrompt(analyticsData, period, currency);
 
-      // Call AI agent (Kiro)
-      const aiResponse = await this.callAIAgent(prompt);
+      // Call LLM with retry logic
+      const aiResponse = await this.llmClient.retry(
+        () => this.llmClient.generateInsights(prompt, currency),
+        2
+      );
 
       // Parse and validate AI response
-      const parsedInsights = this.parseAIResponse(aiResponse);
+      const parsedInsights = this.parseAIResponse(aiResponse, currency);
 
       // Store insights in database
       const insightsInput: AIInsightsInput = {
@@ -133,8 +146,8 @@ export class AIInsightsService {
       };
 
       const savedInsights = await this.insightsRepository.create(
-        userId,
-        insightsInput
+        insightsInput,
+        userId
       );
 
       // Cache the result
@@ -163,19 +176,21 @@ export class AIInsightsService {
   }
 
   /**
-   * Build AI prompt from analytics data
+   * Build AI prompt from analytics data with currency context
    */
-  buildPrompt(data: AnalyticsData, period: DateRange): string {
+  buildPrompt(data: AnalyticsData, period: DateRange, currency: Currency): string {
+    const currencySymbol = CurrencyFormatter.getSymbol(currency);
+    
     const categoryBreakdownText = data.categoryBreakdown
       .map(
         (c) =>
-          `- ${c.category}: $${c.total.toFixed(2)} (${c.percentage.toFixed(1)}%)`
+          `- ${c.category}: ${CurrencyFormatter.format(c.total, currency)} (${c.percentage.toFixed(1)}%)`
       )
       .join('\n');
 
     const topMerchantsText = data.topMerchants
       ? data.topMerchants
-          .map((m) => `- ${m.merchant}: $${m.total.toFixed(2)}`)
+          .map((m) => `- ${m.merchant}: ${CurrencyFormatter.format(m.total, currency)}`)
           .join('\n')
       : 'No merchant data available';
 
@@ -183,7 +198,7 @@ export class AIInsightsService {
       ? data.budgetStatus
           .map(
             (b) =>
-              `- ${b.name}: ${b.percentageUsed.toFixed(1)}% used ($${b.spent.toFixed(2)} of $${b.limit.toFixed(2)})`
+              `- ${b.name}: ${b.percentageUsed.toFixed(1)}% used (${CurrencyFormatter.format(b.spent, currency)} of ${CurrencyFormatter.format(b.limit, currency)})`
           )
           .join('\n')
       : 'No budgets configured';
@@ -191,14 +206,17 @@ export class AIInsightsService {
     const trendsText = data.trends
       ? `Recent spending trend:\n${data.trends
           .slice(-7)
-          .map((t) => `- ${t.date}: $${t.amount.toFixed(2)}`)
+          .map((t) => `- ${t.date}: ${CurrencyFormatter.format(t.amount, currency)}`)
           .join('\n')}`
       : '';
 
     return `You are a financial advisor analyzing a user's spending patterns.
 
+User Currency: ${currency}
+Currency Symbol: ${currencySymbol}
+
 Period: ${period.startDate} to ${period.endDate}
-Total Spending: $${data.totalSpending.toFixed(2)}
+Total Spending: ${CurrencyFormatter.format(data.totalSpending, currency)}
 Number of Transactions: ${data.transactionCount}
 
 Category Breakdown:
@@ -218,6 +236,8 @@ Please provide:
 3. Any unusual spending spikes or patterns
 4. 3-5 personalized savings recommendations
 5. Spending projections for next week and next month
+
+IMPORTANT: Use the ${currencySymbol} symbol for all monetary amounts in your response.
 
 Format your response as JSON with the following structure:
 {
@@ -251,7 +271,7 @@ Format your response as JSON with the following structure:
   /**
    * Parse and validate AI response
    */
-  parseAIResponse(response: string): AIResponse {
+  parseAIResponse(response: string, _currency: Currency): AIResponse {
     try {
       // Try to extract JSON from response (in case AI adds extra text)
       const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -381,28 +401,6 @@ Format your response as JSON with the following structure:
   }
 
   /**
-   * Call AI agent (Kiro) - placeholder for actual implementation
-   */
-  private async callAIAgent(prompt: string): Promise<string> {
-    // TODO: Implement actual Kiro AI Agent API call
-    // For now, this is a placeholder that simulates an AI response
-    
-    // In production, this would make an HTTP request to the Kiro AI Agent API
-    // Example:
-    // const response = await fetch(AI_AGENT_URL, {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //     'Authorization': `Bearer ${process.env.AI_AGENT_API_KEY}`
-    //   },
-    //   body: JSON.stringify({ prompt })
-    // });
-    // return await response.text();
-
-    throw new Error('AI Agent integration not yet implemented');
-  }
-
-  /**
    * Handle generation errors with graceful degradation
    */
   private async handleGenerationError(
@@ -411,6 +409,15 @@ Format your response as JSON with the following structure:
     error: any
   ): Promise<AIInsights> {
     console.error('Error generating AI insights:', error);
+
+    // If it's an LLM error and retryable, try to return cached insights
+    if (error instanceof LLMError && error.retryable) {
+      const latest = await this.getLatestInsights(userId);
+      if (latest) {
+        console.log('Returning latest cached insights due to LLM error');
+        return latest;
+      }
+    }
 
     // Try to return the latest cached insights
     const latest = await this.getLatestInsights(userId);
@@ -442,7 +449,7 @@ Format your response as JSON with the following structure:
 
     // Store fallback insights
     try {
-      return await this.insightsRepository.create(userId, fallbackInsights);
+      return await this.insightsRepository.create(fallbackInsights, userId);
     } catch (dbError) {
       // If even storing fails, throw an error
       const errorResponse = {
@@ -479,4 +486,6 @@ Format your response as JSON with the following structure:
       timestamp: Date.now(),
     });
   }
+
+
 }

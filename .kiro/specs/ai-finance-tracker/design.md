@@ -595,3 +595,372 @@ The AI service will:
 - Regenerate on demand or when significant new data is added
 - Store in database for historical reference
 - Use in-memory cache for current period insights
+
+## Multi-Currency Support
+
+### Currency Architecture
+
+The system will support multiple currencies (GBP, INR) with user-selectable preferences stored in user settings.
+
+### Database Schema Updates
+
+#### user_settings table
+```sql
+CREATE TABLE user_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  currency VARCHAR(3) NOT NULL DEFAULT 'GBP' CHECK (currency IN ('GBP', 'INR')),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_user_settings_user ON user_settings(user_id);
+```
+
+### Currency Configuration
+
+```typescript
+interface CurrencyConfig {
+  code: 'GBP' | 'INR'
+  symbol: string
+  name: string
+  locale: string
+}
+
+const SUPPORTED_CURRENCIES: Record<string, CurrencyConfig> = {
+  GBP: {
+    code: 'GBP',
+    symbol: '£',
+    name: 'British Pound',
+    locale: 'en-GB'
+  },
+  INR: {
+    code: 'INR',
+    symbol: '₹',
+    name: 'Indian Rupee',
+    locale: 'en-IN'
+  }
+}
+```
+
+### Currency Formatting Utility
+
+```typescript
+class CurrencyFormatter {
+  static format(amount: number, currency: 'GBP' | 'INR'): string {
+    const config = SUPPORTED_CURRENCIES[currency]
+    return new Intl.NumberFormat(config.locale, {
+      style: 'currency',
+      currency: config.code
+    }).format(amount)
+  }
+  
+  static getSymbol(currency: 'GBP' | 'INR'): string {
+    return SUPPORTED_CURRENCIES[currency].symbol
+  }
+}
+```
+
+### Frontend Implementation
+
+#### Settings Component
+- **SettingsPage**: Main settings interface
+- **CurrencySelector**: Dropdown for currency selection
+- **SettingsForm**: Form for updating user preferences
+
+#### Currency Context
+```typescript
+interface CurrencyContextType {
+  currency: 'GBP' | 'INR'
+  setCurrency: (currency: 'GBP' | 'INR') => void
+  formatAmount: (amount: number) => string
+  currencySymbol: string
+}
+
+const CurrencyContext = createContext<CurrencyContextType>()
+```
+
+### Backend API Updates
+
+#### Settings Endpoints
+```
+GET    /api/settings              - Get user settings
+PUT    /api/settings              - Update user settings
+POST   /api/settings/currency     - Update currency preference
+```
+
+#### Settings Service
+```typescript
+interface SettingsService {
+  getUserSettings(userId: string): Promise<UserSettings>
+  updateSettings(userId: string, settings: Partial<UserSettings>): Promise<UserSettings>
+  updateCurrency(userId: string, currency: 'GBP' | 'INR'): Promise<UserSettings>
+}
+```
+
+### Currency in AI Insights
+
+The AI Agent will receive currency context in prompts:
+
+```
+User Currency: [GBP/INR]
+Currency Symbol: [£/₹]
+
+[Include currency in all monetary references]
+```
+
+AI responses will format amounts according to user currency:
+- "You spent £450 on groceries" (GBP)
+- "You spent ₹35,000 on groceries" (INR)
+
+## Real AI Agent Implementation
+
+### LLM Integration Architecture
+
+```mermaid
+graph TB
+    AISvc[AI Insights Service] --> Prompt[Prompt Builder]
+    Prompt --> LLM[LLM API Client]
+    LLM --> OpenAI[OpenAI API]
+    LLM --> Anthropic[Anthropic API]
+    LLM --> Fallback[Fallback Handler]
+    OpenAI --> Parser[Response Parser]
+    Anthropic --> Parser
+    Fallback --> Parser
+    Parser --> Validator[Response Validator]
+    Validator --> Cache[Cache Layer]
+    Cache --> AISvc
+```
+
+### LLM Provider Configuration
+
+```typescript
+interface LLMConfig {
+  provider: 'openai' | 'anthropic'
+  apiKey: string
+  model: string
+  maxTokens: number
+  temperature: number
+  timeout: number
+}
+
+const LLM_CONFIGS: Record<string, LLMConfig> = {
+  openai: {
+    provider: 'openai',
+    apiKey: process.env.OPENAI_API_KEY!,
+    model: 'gpt-4-turbo-preview',
+    maxTokens: 2000,
+    temperature: 0.7,
+    timeout: 30000
+  },
+  anthropic: {
+    provider: 'anthropic',
+    apiKey: process.env.ANTHROPIC_API_KEY!,
+    model: 'claude-3-sonnet-20240229',
+    maxTokens: 2000,
+    temperature: 0.7,
+    timeout: 30000
+  }
+}
+```
+
+### LLM Client Implementation
+
+```typescript
+interface LLMClient {
+  generateInsights(prompt: string, currency: string): Promise<string>
+  validateResponse(response: string): boolean
+  retry(fn: () => Promise<string>, maxRetries: number): Promise<string>
+}
+
+class OpenAIClient implements LLMClient {
+  private config: LLMConfig
+  private client: OpenAI
+  
+  constructor(config: LLMConfig) {
+    this.config = config
+    this.client = new OpenAI({ apiKey: config.apiKey })
+  }
+  
+  async generateInsights(prompt: string, currency: string): Promise<string> {
+    const response = await this.client.chat.completions.create({
+      model: this.config.model,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a financial advisor. User's currency is ${currency}. Format all amounts with appropriate currency symbols.`
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      response_format: { type: 'json_object' }
+    })
+    
+    return response.choices[0].message.content || ''
+  }
+  
+  async retry(fn: () => Promise<string>, maxRetries: number = 2): Promise<string> {
+    let lastError: Error
+    
+    for (let i = 0; i <= maxRetries; i++) {
+      try {
+        return await fn()
+      } catch (error) {
+        lastError = error as Error
+        if (i < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)))
+        }
+      }
+    }
+    
+    throw lastError!
+  }
+}
+```
+
+### Enhanced AI Insights Service
+
+```typescript
+class AIInsightsService {
+  private llmClient: LLMClient
+  private analyticsService: AnalyticsService
+  private insightsRepository: InsightsRepository
+  private settingsService: SettingsService
+  
+  constructor(
+    llmClient: LLMClient,
+    analyticsService: AnalyticsService,
+    insightsRepository: InsightsRepository,
+    settingsService: SettingsService
+  ) {
+    this.llmClient = llmClient
+    this.analyticsService = analyticsService
+    this.insightsRepository = insightsRepository
+    this.settingsService = settingsService
+  }
+  
+  async generateInsights(userId: string, period: DateRange): Promise<AIInsights> {
+    // Get user settings for currency
+    const settings = await this.settingsService.getUserSettings(userId)
+    const currency = settings.currency
+    
+    // Gather analytics data
+    const analyticsData = await this.gatherAnalyticsData(userId, period)
+    
+    // Build prompt with currency context
+    const prompt = this.buildPrompt(analyticsData, period, currency)
+    
+    // Call LLM with retry logic
+    const response = await this.llmClient.retry(
+      () => this.llmClient.generateInsights(prompt, currency),
+      2
+    )
+    
+    // Parse and validate response
+    const parsedInsights = this.parseAIResponse(response, currency)
+    
+    // Store insights
+    const insightsInput: AIInsightsInput = {
+      period_start: period.startDate,
+      period_end: period.endDate,
+      monthly_summary: parsedInsights.monthlySummary,
+      category_insights: parsedInsights.categoryInsights,
+      spending_spikes: parsedInsights.spendingSpikes || [],
+      recommendations: parsedInsights.recommendations || [],
+      projections: parsedInsights.projections
+    }
+    
+    return await this.insightsRepository.create(insightsInput, userId)
+  }
+  
+  buildPrompt(data: AnalyticsData, period: DateRange, currency: string): string {
+    const currencySymbol = CurrencyFormatter.getSymbol(currency as 'GBP' | 'INR')
+    
+    return `You are a financial advisor analyzing spending patterns.
+
+User Currency: ${currency}
+Currency Symbol: ${currencySymbol}
+
+Period: ${period.startDate} to ${period.endDate}
+Total Spending: ${CurrencyFormatter.format(data.totalSpending, currency as 'GBP' | 'INR')}
+Number of Transactions: ${data.transactionCount}
+
+Category Breakdown:
+${data.categoryBreakdown.map(c => 
+  `- ${c.category}: ${CurrencyFormatter.format(c.total, currency as 'GBP' | 'INR')} (${c.percentage.toFixed(1)}%)`
+).join('\n')}
+
+Budget Status:
+${data.budgetStatus?.map(b => 
+  `- ${b.name}: ${b.percentageUsed.toFixed(1)}% used (${CurrencyFormatter.format(b.spent, currency as 'GBP' | 'INR')} of ${CurrencyFormatter.format(b.limit, currency as 'GBP' | 'INR')})`
+).join('\n') || 'No budgets configured'}
+
+Please provide financial insights in JSON format with:
+1. monthlySummary: Brief 2-3 sentence overview
+2. categoryInsights: Array of insights per category
+3. spendingSpikes: Unusual spending patterns
+4. recommendations: 3-5 savings suggestions
+5. projections: Next week and month predictions
+
+IMPORTANT: Use ${currencySymbol} symbol for all monetary amounts in your response.`
+  }
+}
+```
+
+### Environment Variables
+
+```env
+# AI Provider Configuration
+AI_PROVIDER=openai  # or 'anthropic'
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# AI Model Settings
+AI_MODEL=gpt-4-turbo-preview
+AI_MAX_TOKENS=2000
+AI_TEMPERATURE=0.7
+AI_TIMEOUT=30000
+```
+
+### Error Handling for LLM
+
+```typescript
+class LLMError extends Error {
+  constructor(
+    message: string,
+    public code: 'TIMEOUT' | 'RATE_LIMIT' | 'INVALID_RESPONSE' | 'API_ERROR',
+    public retryable: boolean = false
+  ) {
+    super(message)
+    this.name = 'LLMError'
+  }
+}
+
+// In AI Insights Service
+try {
+  const response = await this.llmClient.generateInsights(prompt, currency)
+  return this.parseAIResponse(response, currency)
+} catch (error) {
+  if (error instanceof LLMError && error.retryable) {
+    // Return cached insights or fallback
+    const cached = await this.getLatestInsights(userId)
+    if (cached) return cached
+  }
+  
+  // Return fallback insights
+  return this.generateFallbackInsights(userId, period, currency)
+}
+```
+
+### Cost Optimization
+
+- Cache insights for 24 hours to reduce API calls
+- Use cheaper models for simple queries
+- Implement request batching where possible
+- Monitor API usage and costs
+- Set rate limits per user
+- Implement token counting before requests

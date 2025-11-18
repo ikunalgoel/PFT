@@ -163,12 +163,28 @@ export interface BudgetComparison {
   status: 'under' | 'near' | 'over';
 }
 
+// User Settings types
+export type Currency = 'GBP' | 'INR';
+
+export interface UserSettings {
+  id: string;
+  user_id: string;
+  currency: Currency;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserSettingsInput {
+  currency: Currency;
+}
+
 // Database table names
 export const TABLE_NAMES = {
   TRANSACTIONS: 'transactions',
   BUDGETS: 'budgets',
   BUDGET_ALERTS: 'budget_alerts',
   AI_INSIGHTS: 'ai_insights',
+  USER_SETTINGS: 'user_settings',
 } as const;
 
 // Error types

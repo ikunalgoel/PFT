@@ -1,0 +1,16 @@
+date,amount,category,merchant,notes
+2024-01-01,125.50,Groceries,Whole Foods,Weekly groceries
+2024-01-02,45.00,Dining,Olive Garden,Dinner with family
+2024-01-03,15.00,Transportation,Uber,Ride to office
+2024-01-04,89.99,Shopping,Amazon,New headphones
+2024-01-05,12.50,Entertainment,AMC Theaters,Movie ticket
+2024-01-06,200.00,Utilities,PG&E,Monthly electric bill
+2024-01-07,75.00,Healthcare,CVS Pharmacy,Prescription refill
+2024-01-08,50.00,Personal Care,Supercuts,Haircut
+2024-01-09,30.00,Groceries,Trader Joes,Snacks and drinks
+2024-01-10,18.99,Subscriptions,Spotify,Monthly premium
+2024-01-11,65.00,Dining,Cheesecake Factory,Lunch meeting
+2024-01-12,8.50,Transportation,Metro Card,Weekly pass
+2024-01-13,120.00,Groceries,Costco,Bulk shopping
+2024-01-14,35.00,Entertainment,Bowling Alley,Weekend fun
+2024-01-15,95.00,Shopping,Target,Household items
